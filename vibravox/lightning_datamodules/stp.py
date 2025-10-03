@@ -7,6 +7,213 @@ from torch.utils.data import DataLoader
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer
 from vibravox.torch_modules.dsp.data_augmentation import WaveformDataAugmentation
 
+##### COMMON VOICE DATA MODULE #####
+
+
+class STPLightningDataModuleCommonVoice(STPLightningDataModule):
+    """
+    LightningDataModule for Speech-to-Phoneme (STP) using Common Voice dataset.
+    """
+
+    COMMON_VOICE = "mozilla-foundation/common_voice_13_0"
+
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        dataset_name: str = COMMON_VOICE,
+        language: str = "fr",
+        streaming: bool = False,
+        batch_size: int = 32,
+        num_workers: int = 24,
+        feature_extractor: Wav2Vec2FeatureExtractor = None,
+        tokenizer: Wav2Vec2CTCTokenizer = None,
+        data_augmentation: torch.nn.Module = None,
+        **kwargs,
+    ):
+        """
+        LightningDataModule for Speech-to-Phoneme (STP).
+
+        Args:
+            sample_rate (int, optional): Sample rate at which the dataset is output. Defaults to 16000.
+            dataset_name (str, optional): Principal dataset name that is going to be used for train/validation and testing.
+                Defaults to COMMON_VOICE.
+            language (str, optional): Language. Defaults to "fr"
+            streaming (bool, optional): If True, the audio files are dynamically downloaded. Defaults to False.
+            batch_size (int, optional): Batch size. Defaults to 32.
+            num_workers (int, optional): Number of workers. Defaults to 4.
+            feature_extractor (Wav2Vec2FeatureExtractor): Feature extractor. Defaults to None.
+            tokenizer (Wav2Vec2CTCTokenizer): Tokenizer. Defaults to None.
+            data_augmentation (nn.Module, optional): Data augmentation module. Defaults to None.
+        """
+        super().__init__()
+
+        self.sample_rate = sample_rate
+        self.dataset_name = dataset_name
+        assert (
+            dataset_name in self.COMMON_VOICE
+        ), f"dataset_name {dataset_name} not supported."
+
+        self.language = language
+        self.streaming = streaming
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.feature_extractor = feature_extractor
+        self.tokenizer = tokenizer
+
+        if data_augmentation is None:
+            data_augmentation = WaveformDataAugmentation(sample_rate)
+        assert isinstance(
+            data_augmentation, WaveformDataAugmentation
+        ), "data_augmentation must be a WaveformDataAugmentation"
+
+        self.data_augmentation = data_augmentation
+
+    def setup(self, stage=None):
+        """
+        Sets up the dataset.
+
+        Args:
+            stage (str): Pipeline stage among ['fit', 'validate', 'test', 'predict']. Defaults to None.
+
+        Notes:
+            This function runs on every accelerator in distributed mode.
+            That is why it is necessary to define attributes here rather than in __init__.
+        """
+
+        dataset_dict = load_dataset(
+            self.dataset_name, self.language, streaming=self.streaming
+        )
+        dataset_dict = self.prepare_dataset_dict(dataset_dict)
+
+        if stage == "fit" or stage is None:
+            self.train_dataset = dataset_dict["train"]
+            self.val_dataset = dataset_dict["validation"]
+        elif stage == "test" or stage is None:
+            self.test_dataset = dataset_dict["test"]
+
+
+    def prepare_dataset_dict(self, dataset_dict: DatasetDict) -> DatasetDict:
+        """
+        Prepares the dataset dictionary.
+
+        Args:
+            dataset_dict (DatasetDict): Dataset dictionary.
+
+        Returns:
+            DatasetDict: Prepared dataset dictionary.
+        """
+        dataset_dict = dataset_dict.select_columns(["audio", "sentence"])
+
+        # Resample the audio to the right sample rate
+        dataset_dict = dataset_dict.cast_column(
+            "audio", Audio(sampling_rate=self.sample_rate, mono=False)
+        )
+
+        return dataset_dict
+
+    def train_dataloader(self) -> DataLoader:
+        """
+        Train dataloader.
+
+        Returns:
+            DataLoader
+        """
+
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            collate_fn=lambda batch: self.data_collator(batch, deterministic=False),
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, Dict[str, DataLoader]]:
+        """
+        Validation dataloader.
+
+        Returns:
+             Union[DataLoader, Dict[str, DataLoader]]
+        """
+
+        return DataLoader(
+            self.val_dataset,
+            batch_size=1,
+            num_workers=0,
+            collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, Dict[str, DataLoader]]:
+        """
+        Test dataloader.
+
+        Returns:
+             Union[DataLoader, Dict[str, DataLoader]]
+        """
+
+        return DataLoader(
+            self.test_dataset,
+            batch_size=1,
+            num_workers=0,
+            collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
+        )
+
+    def data_collator(
+        self, batch: Dict[str, Union[torch.Tensor, List[str]]], deterministic: bool
+    ) -> Dict[str, Union[torch.Tensor, List[int], List[str]]]:
+        """
+        Custom data collator function to dynamically pad the data.
+
+        Args:
+            batch (Dict[str, Union[torch.Tensor, List[str]]]) : Dict from the dataset with the keys 'audio' and 'phonemes':
+                - 'audio' (torch.Tensor of dimension (sample_rate * duration))
+                - 'phonemes' (str)
+            deterministic (bool): If True, always select the same part of the signal.
+
+        Returns:
+            Dict[str, Union[torch.Tensor, List[int], List[str]]]: A dictionary containing collated data with keys:
+            - 'audio' (torch.Tensor of dimension (batch_size, sample_rate * duration)),
+            - 'phonemes_ids' (torch.Tensor of dimension (batch_size, multiples of 128),
+            - 'phonemes_str' (List[str]),
+        """
+
+        audios = [sample["audio"]["array"] for sample in batch]
+        phonemes = [sample["phonemized_text"] for sample in batch]
+
+        audio_processed = self.feature_extractor(
+            raw_speech=audios,
+            padding="longest",
+            return_tensors="pt",
+            sampling_rate=self.sample_rate,  # Do not resample anything, simple verification
+            pad_to_multiple_of=128,
+            # Because NVIDIA GeForce RTX 2080 Ti have 128 Concurrent Kernel Execution
+        )
+
+        labels_processed = self.tokenizer(
+            text=phonemes,
+            padding="longest",
+            return_tensors="pt",
+            pad_to_multiple_of=128,
+            return_attention_mask=True,
+            # Because NVIDIA GeForce RTX 2080 Ti have 128 Concurrent Kernel Execution
+        )
+
+        labels = labels_processed.input_ids.masked_fill(
+            labels_processed.attention_mask.ne(1), -100
+        )
+        audio_processed = audio_processed.input_values
+
+        # Apply data augmentation
+        if deterministic is False:
+            with torch.no_grad():
+                audio_processed, _ = self.data_augmentation(audio_processed)
+
+        return {
+            "audio": audio_processed,
+            "phonemes_ids": labels,
+            "phonemes_str": phonemes,
+        }
+
+##### VIBRAVOX DATA MODULE #####
+
 
 class STPLightningDataModule(LightningDataModule):
 
@@ -62,7 +269,8 @@ class STPLightningDataModule(LightningDataModule):
 
         self.dataset_name_secondary = dataset_name_secondary
         assert (
-            dataset_name_secondary is None or dataset_name_secondary in self.LIST_OF_VIBRAVOX
+            dataset_name_secondary is None
+            or dataset_name_secondary in self.LIST_OF_VIBRAVOX
         ), f"dataset_name_secondary {dataset_name_secondary} not supported."
         self.subset = subset
         self.sensor = sensor
@@ -71,7 +279,7 @@ class STPLightningDataModule(LightningDataModule):
         self.num_workers = num_workers
         self.feature_extractor = feature_extractor
         self.tokenizer = tokenizer
-        
+
         if data_augmentation is None:
             data_augmentation = WaveformDataAugmentation(sample_rate)
         assert isinstance(
@@ -92,11 +300,15 @@ class STPLightningDataModule(LightningDataModule):
             That is why it is necessary to define attributes here rather than in __init__.
         """
 
-        dataset_dict_principal = load_dataset(self.dataset_name_principal, self.subset, streaming=self.streaming)
+        dataset_dict_principal = load_dataset(
+            self.dataset_name_principal, self.subset, streaming=self.streaming
+        )
         dataset_dict_principal = self.prepare_dataset_dict(dataset_dict_principal)
 
         if self.dataset_name_secondary is not None:
-            dataset_dict_secondary = load_dataset(self.dataset_name_secondary, self.subset, streaming=self.streaming)
+            dataset_dict_secondary = load_dataset(
+                self.dataset_name_secondary, self.subset, streaming=self.streaming
+            )
             dataset_dict_secondary = self.prepare_dataset_dict(dataset_dict_secondary)
 
         if stage == "fit" or stage is None:
@@ -125,7 +337,9 @@ class STPLightningDataModule(LightningDataModule):
         dataset_dict = dataset_dict.select_columns(["audio", "phonemized_text"])
 
         # Resample the audio to the right sample rate
-        dataset_dict = dataset_dict.cast_column("audio", Audio(sampling_rate=self.sample_rate, mono=False))
+        dataset_dict = dataset_dict.cast_column(
+            "audio", Audio(sampling_rate=self.sample_rate, mono=False)
+        )
 
         return dataset_dict
 
@@ -141,9 +355,7 @@ class STPLightningDataModule(LightningDataModule):
             self.train_dataset_principal,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            collate_fn=lambda batch: self.data_collator(
-                    batch, deterministic=False
-                ),
+            collate_fn=lambda batch: self.data_collator(batch, deterministic=False),
         )
 
     def val_dataloader(self) -> Union[DataLoader, Dict[str, DataLoader]]:
@@ -158,9 +370,7 @@ class STPLightningDataModule(LightningDataModule):
             self.val_dataset_principal,
             batch_size=min(1, self.batch_size // 4),
             num_workers=self.num_workers,
-            collate_fn=lambda batch: self.data_collator(
-                    batch, deterministic=True
-                ),
+            collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
         )
 
         if self.dataset_name_secondary is not None:
@@ -168,11 +378,12 @@ class STPLightningDataModule(LightningDataModule):
                 self.val_dataset_secondary,
                 batch_size=min(1, self.batch_size // 4),
                 num_workers=self.num_workers,
-                collate_fn=lambda batch: self.data_collator(
-                    batch, deterministic=True
-                ),
+                collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
             )
-            return {"principal": dataloader_principal, "secondary": dataloader_secondary}
+            return {
+                "principal": dataloader_principal,
+                "secondary": dataloader_secondary,
+            }
         else:
             return dataloader_principal
 
@@ -188,9 +399,7 @@ class STPLightningDataModule(LightningDataModule):
             self.test_dataset_principal,
             batch_size=1,
             num_workers=self.num_workers,
-            collate_fn=lambda batch: self.data_collator(
-                    batch, deterministic=True
-                ),
+            collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
         )
 
         if self.dataset_name_secondary is not None:
@@ -198,11 +407,12 @@ class STPLightningDataModule(LightningDataModule):
                 self.test_dataset_secondary,
                 batch_size=1,
                 num_workers=self.num_workers,
-                collate_fn=lambda batch: self.data_collator(
-                    batch, deterministic=True
-                ),
+                collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
             )
-            return {"principal": dataloader_principal, "secondary": dataloader_secondary}
+            return {
+                "principal": dataloader_principal,
+                "secondary": dataloader_secondary,
+            }
         else:
             return dataloader_principal
 
@@ -227,7 +437,7 @@ class STPLightningDataModule(LightningDataModule):
 
         audios = [sample["audio"]["array"] for sample in batch]
         phonemes = [sample["phonemized_text"] for sample in batch]
-        
+
         audio_processed = self.feature_extractor(
             raw_speech=audios,
             padding="longest",
@@ -246,11 +456,13 @@ class STPLightningDataModule(LightningDataModule):
             # Because NVIDIA GeForce RTX 2080 Ti have 128 Concurrent Kernel Execution
         )
 
-        labels = labels_processed.input_ids.masked_fill(labels_processed.attention_mask.ne(1), -100)
+        labels = labels_processed.input_ids.masked_fill(
+            labels_processed.attention_mask.ne(1), -100
+        )
         audio_processed = audio_processed.input_values
-        
+
         # Apply data augmentation
-        if deterministic is False:    
+        if deterministic is False:
             with torch.no_grad():
                 audio_processed, _ = self.data_augmentation(audio_processed)
 
