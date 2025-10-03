@@ -91,7 +91,6 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
         elif stage == "test" or stage is None:
             self.test_dataset = dataset_dict["test"]
 
-
     def prepare_dataset_dict(self, dataset_dict: DatasetDict) -> DatasetDict:
         """
         Prepares the dataset dictionary.
@@ -211,6 +210,7 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
             "phonemes_ids": labels,
             "phonemes_str": phonemes,
         }
+
 
 ##### VIBRAVOX DATA MODULE #####
 
