@@ -15,12 +15,12 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
     LightningDataModule for Speech-to-Phoneme (STP) using Common Voice dataset.
     """
 
-    COMMON_VOICE = "mozilla-foundation/common_voice_13_0"
+    COMMON_VOICE_PHONEME = "common_voice_13_french_phoneme"
 
     def __init__(
         self,
         sample_rate: int = 16000,
-        dataset_name: str = COMMON_VOICE,
+        dataset_name: str = COMMON_VOICE_PHONEME,
         language: str = "fr",
         streaming: bool = False,
         batch_size: int = 32,
@@ -36,7 +36,7 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
         Args:
             sample_rate (int, optional): Sample rate at which the dataset is output. Defaults to 16000.
             dataset_name (str, optional): Principal dataset name that is going to be used for train/validation and testing.
-                Defaults to COMMON_VOICE.
+                Defaults to COMMON_VOICE_PHONEME.
             language (str, optional): Language. Defaults to "fr"
             streaming (bool, optional): If True, the audio files are dynamically downloaded. Defaults to False.
             batch_size (int, optional): Batch size. Defaults to 32.
@@ -50,7 +50,7 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
         self.sample_rate = sample_rate
         self.dataset_name = dataset_name
         assert (
-            dataset_name in self.COMMON_VOICE
+            dataset_name in self.COMMON_VOICE_PHONEME
         ), f"dataset_name {dataset_name} not supported."
 
         self.language = language
@@ -101,7 +101,7 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
         Returns:
             DatasetDict: Prepared dataset dictionary.
         """
-        dataset_dict = dataset_dict.select_columns(["audio", "sentence"])
+        dataset_dict = dataset_dict.select_columns(["audio", "phoneme"])
 
         # Resample the audio to the right sample rate
         dataset_dict = dataset_dict.cast_column(
@@ -175,7 +175,7 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
         """
 
         audios = [sample["audio"]["array"] for sample in batch]
-        phonemes = [sample["phonemized_text"] for sample in batch]
+        phonemes = [sample["phoneme"] for sample in batch]
 
         audio_processed = self.feature_extractor(
             raw_speech=audios,
@@ -210,6 +210,16 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
             "phonemes_ids": labels,
             "phonemes_str": phonemes,
         }
+
+    def get_nb_samples_train(self) -> int:
+        """
+        The function returns the length of self.train_dataset.
+
+        Returns:
+            int: Length of self.train_dataset
+        """
+        self.setup("fit")
+        return len(self.train_dataset)
 
 
 ##### VIBRAVOX DATA MODULE #####
