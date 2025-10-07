@@ -36,13 +36,15 @@ def main(cfg: DictConfig):
     """
 
     # Instantiate LightningDataModule
-    lightning_datamodule: LightningDataModule = hydra.utils.instantiate(cfg.lightning_datamodule)
+    lightning_datamodule: LightningDataModule = hydra.utils.instantiate(
+        cfg.lightning_datamodule
+    )
 
     # Instantiate LightningModule
     lightning_module: LightningModule = hydra.utils.instantiate(
         cfg.lightning_module,
         nb_steps_per_epoch=ceil(
-            datamodule.get_nb_samples_train()
+            lightning_datamodule.get_nb_samples_train()
             / (cfg.trainer.gpus * cfg.batch_size * cfg.trainer.accumulate_grad_batches)
         ),
     )
@@ -50,7 +52,9 @@ def main(cfg: DictConfig):
     # Instantiate Trainer
     callbacks: List[Callback] = list(hydra.utils.instantiate(cfg.callbacks).values())
     logger: Logger = hydra.utils.instantiate(cfg.logging.logger)
-    trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger, _convert_="partial")
+    trainer: Trainer = hydra.utils.instantiate(
+        cfg.trainer, callbacks=callbacks, logger=logger, _convert_="partial"
+    )
 
     # Train the model ⚡
     trainer.fit(lightning_module, datamodule=lightning_datamodule)
