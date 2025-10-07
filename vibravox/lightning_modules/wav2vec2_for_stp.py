@@ -3,40 +3,64 @@ from typing import Any, Dict
 
 import torch
 import transformers
+import logging
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import STEP_OUTPUT
 from torchmetrics import MetricCollection
 from torchmetrics.text import CharErrorRate
 from transformers import Wav2Vec2Processor
 
+logger: logging.Logger = logging.getLogger(__name__)
 
 class Wav2Vec2ForSTPLightningModule(LightningModule):
     def __init__(
         self,
+        sample_rate: int,
         wav2vec2_for_ctc: transformers.Wav2Vec2ForCTC,
         optimizer: partial[torch.optim.Optimizer],
+        scheduler: partial[torch.optim.lr_scheduler],
+        unfreeze_at_step: int,
         push_to_hub_after_testing: bool = False,
+        description: str = None,
     ):
         """
         Definition of Wav2Vec2ForSTP and its training pipeline with pytorch lightning paradigm
 
         Args:
+
             wav2vec2_for_ctc (torch.nn.Module): Neural network to enhance the speech
             optimizer (partial[torch.optim.Optimizer]): Optimizer
+
+
             push_to_hub_after_testing (bool): If True, the model is pushed to the Hugging Face hub after testing. Defaults to False.
+            description (str): Description to log in tensorboard
         """
         super().__init__()
 
-        self.sample_rate: int = 16_000
+        self.sample_rate: int = sample_rate
         self.wav2vec2_for_ctc: transformers.Wav2Vec2ForCTC = wav2vec2_for_ctc(
-            pad_token_id=35,  # Corresponds to `self.trainer.datamodule.tokenizer.pad_token_id`
-            vocab_size=38,  # Corresponds to `len(self.trainer.datamodule.tokenizer)`
+            pad_token_id=36,  # Corresponds to `self.trainer.datamodule.tokenizer.pad_token_id`
+            vocab_size=39,  # Corresponds to `len(self.trainer.datamodule.tokenizer)`
         )
 
+        self.wav2vec2_for_ctc.freeze_feature_extractor()
+
         self.optimizer: torch.optim.Optimizer = optimizer(params=self.wav2vec2_for_ctc.parameters())
+        self.scheduler: torch.optim.lr_scheduler = scheduler
 
         self.metrics = MetricCollection(dict(char_error_rate=CharErrorRate()))
+        self.unfreeze_at_step: int = unfreeze_at_step
         self.push_to_hub_after_testing: bool = push_to_hub_after_testing
+        self.max_steps = nb_steps_per_epoch * self.scheduler.max_epochs
+        self.description: str = description
+
+    def on_train_start(self) -> None:
+        self.once = False
+        if self.unfreeze_at_step > 0:
+            logger.info("Entering freeze transformer layers learning strategy")
+            for param in self.model.wav2vec2.encoder.layers.parameters():
+                param.requires_grad = False
+            self.once = True
 
     def training_step(self, batch: Dict[str, torch.Tensor]):
         """
@@ -45,6 +69,12 @@ class Wav2Vec2ForSTPLightningModule(LightningModule):
         Args:
             batch (Dict[str, torch.Tensor]): Dict with keys "audio", "phonemes_ids", "phonemes_str"
         """
+        if self.once and 0 < self.unfreeze_at_step < self.global_step:
+            logger.info("Entering unfreeze transformer layers learning strategy")
+            for param in self.model.wav2vec2.encoder.layers.parameters():
+                if not param.requires_grad:
+                    param.requires_grad = True
+            self.once = False
 
         return self.common_step(batch)
 
@@ -81,7 +111,17 @@ class Wav2Vec2ForSTPLightningModule(LightningModule):
 
         """
 
-        return self.optimizer
+        scheduler = {
+            "scheduler": self.scheduler(
+                    self.optimizer,
+                    warmup_steps=int(1e-1 * self.max_steps),
+                    hold_steps=int(4e-1 * self.max_steps),
+                    decay_steps=int(5e-1 * self.max_steps),
+                    total_steps=self.max_steps,
+            )
+        }
+
+        return [self.optimizer], [scheduler]
 
     def on_fit_start(self) -> None:
         """
@@ -90,6 +130,8 @@ class Wav2Vec2ForSTPLightningModule(LightningModule):
         - Checks the consistency of the DataModule's parameters
         """
         self.check_datamodule_parameter()
+        if self.logger and self.description:
+            self.logger.experiment.add_text(tag="description", text_string=self.description)
 
     def on_test_start(self) -> None:
         """
@@ -243,7 +285,7 @@ class Wav2Vec2ForSTPLightningModule(LightningModule):
         )
 
         # Check tokenizer's pad_token_id
-        assert self.trainer.datamodule.tokenizer.pad_token_id == 35, "Pad token id must be 35"
+        assert self.trainer.datamodule.tokenizer.pad_token_id == 36, "Pad token id must be 36"
 
         # Check length of tokenizer
-        assert len(self.trainer.datamodule.tokenizer) == 38, "Vocab size must be 38"
+        assert len(self.trainer.datamodule.tokenizer) == 39, "Vocab size must be 39"
