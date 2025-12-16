@@ -10,18 +10,15 @@ from vibravox.torch_modules.dsp.data_augmentation import WaveformDataAugmentatio
 ##### COMMON VOICE DATA MODULE #####
 
 
-class STPLightningDataModuleCommonVoice(STPLightningDataModule):
+class STPLightningDataModuleCommonVoice(LightningDataModule):
     """
     LightningDataModule for Speech-to-Phoneme (STP) using Common Voice dataset.
     """
 
-    COMMON_VOICE_PHONEME = "common_voice_13_french_phoneme"
-
     def __init__(
         self,
         sample_rate: int = 16000,
-        dataset_name: str = COMMON_VOICE_PHONEME,
-        language: str = "fr",
+        dataset_name: str = "Cnam-LMSSC/common_voice_13_french_phoneme",
         streaming: bool = False,
         batch_size: int = 32,
         num_workers: int = 24,
@@ -37,7 +34,6 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
             sample_rate (int, optional): Sample rate at which the dataset is output. Defaults to 16000.
             dataset_name (str, optional): Principal dataset name that is going to be used for train/validation and testing.
                 Defaults to COMMON_VOICE_PHONEME.
-            language (str, optional): Language. Defaults to "fr"
             streaming (bool, optional): If True, the audio files are dynamically downloaded. Defaults to False.
             batch_size (int, optional): Batch size. Defaults to 32.
             num_workers (int, optional): Number of workers. Defaults to 4.
@@ -53,7 +49,6 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
             dataset_name in self.COMMON_VOICE_PHONEME
         ), f"dataset_name {dataset_name} not supported."
 
-        self.language = language
         self.streaming = streaming
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -81,7 +76,7 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
         """
 
         dataset_dict = load_dataset(
-            self.dataset_name, self.language, streaming=self.streaming
+            self.dataset_name, streaming=self.streaming
         )
         dataset_dict = self.prepare_dataset_dict(dataset_dict)
 
@@ -133,12 +128,14 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
              Union[DataLoader, Dict[str, DataLoader]]
         """
 
-        return DataLoader(
+        dataloader_clean = DataLoader(
             self.val_dataset,
             batch_size=1,
             num_workers=0,
             collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
         )
+        
+        return {"clean": dataloader_clean}
 
     def test_dataloader(self) -> Union[DataLoader, Dict[str, DataLoader]]:
         """
@@ -148,12 +145,14 @@ class STPLightningDataModuleCommonVoice(STPLightningDataModule):
              Union[DataLoader, Dict[str, DataLoader]]
         """
 
-        return DataLoader(
+        dataloader_clean = DataLoader(
             self.test_dataset,
             batch_size=1,
             num_workers=0,
             collate_fn=lambda batch: self.data_collator(batch, deterministic=True),
         )
+        
+        return {"clean": dataloader_clean}
 
     def data_collator(
         self, batch: Dict[str, Union[torch.Tensor, List[str]]], deterministic: bool
