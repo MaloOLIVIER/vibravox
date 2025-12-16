@@ -2,9 +2,12 @@
 
 # Top-level variables available in all config files
 sample_rate: 16000
-description: "${hydra:runtime.choices.lightning_datamodule}"
+description: ckpt_path=${ckpt_path} ||| ${hydra:runtime.choices.lightning_datamodule} || ${lightning_datamodule.id} || ${now:%Y-%m-%d_%H-%M-%S} || batch_size=${lightning_datamodule.batch_size}
 
 unfreeze_at_step: 1000
+dataset_name: "Cnam-LMSSC/common_voice_13_french_phoneme"
+ckpt_path: null
+gpus: 1
 
 # Hydra configuration
 version_base: "1.3"
@@ -22,5 +25,6 @@ defaults:
   - callbacks: # List of callbacks
       - stp_checkpoint
       - rich_model_summary
+      - lr_monitor
   - logging: tensorboard
   - _self_ # priority is given to train.yaml for overrides

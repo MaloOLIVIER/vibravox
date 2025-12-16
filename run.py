@@ -15,7 +15,7 @@ from lightning import (
     seed_everything,
     Trainer,
 )
-
+from math import ceil
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
@@ -45,7 +45,7 @@ def main(cfg: DictConfig):
         cfg.lightning_module,
         nb_steps_per_epoch=ceil(
             lightning_datamodule.get_nb_samples_train()
-            / (cfg.trainer.gpus * cfg.batch_size * cfg.trainer.accumulate_grad_batches)
+            / (cfg.gpus * cfg.lightning_datamodule.batch_size * cfg.trainer.accumulate_grad_batches)
         ),
     )
 
@@ -72,6 +72,8 @@ def setup_environment():
 
     # Set environment variables for full trace of errors
     os.environ["HYDRA_FULL_ERROR"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+    os.environ["HF_DATASETS_OFFLINE"] = "0"
 
     # Enable CUDNN backend
     torch.backends.cudnn.enabled = True
