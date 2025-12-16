@@ -2,13 +2,11 @@ _target_: vibravox.lightning_modules.wav2vec2_for_stp.Wav2Vec2ForSTPLightningMod
 
 sample_rate: ${sample_rate}
 unfreeze_at_step: ${unfreeze_at_step}
-description: "${description} || Wav2Vec2ForCTC()"
+description: "${description} || Wav2Vec2ForCTC(samplerate=${sample_rate}, unfreeze_at_step=${unfreeze_at_step}, data_augmentation=${lightning_datamodule.data_augmentation})"
 push_to_hub_after_testing: False
+max_epochs: ${trainer.max_epochs}
 
 defaults:
   - optimizer: adam
   - scheduler: trapeze
   - dnn_module@wav2vec2_for_ctc: wav2vec2_for_ctc_from_pretrained
-
-
-
