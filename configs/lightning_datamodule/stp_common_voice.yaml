@@ -1,11 +1,10 @@
-_target_: vibravox.lightning_datamodules.stp.STPLightningDataModule
+_target_: vibravox.lightning_datamodules.stp.STPLightningDataModuleCommonVoice
 
 sample_rate: ${sample_rate}
-dataset_name: "Cnam-LMSSC/common_voice_13_french_phoneme"
-language: "fr"
+dataset_name: ${dataset_name}
 streaming: False
-batch_size: 8 # batch size of 1600 s
-num_workers: 24
+batch_size: 16 # batchsize = 64 per GPU i.e. 256 overall with 4 GPUs i.e. grad_accum = 4
+num_workers: 4
 
 feature_extractor:
   _target_: transformers.Wav2Vec2FeatureExtractor
@@ -19,6 +18,8 @@ tokenizer:
   _target_: transformers.Wav2Vec2CTCTokenizer.from_pretrained
   pretrained_model_name_or_path: "Cnam-LMSSC/common-voice-13-wav2vec2-tokenizer"
 
+id: ${dataset_name}
+
 defaults:
-  - data_augmentation: null
+  - data_augmentation: identity
   - _self_ # priority is given to stp_common_voice.yaml for overrides
