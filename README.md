@@ -101,11 +101,13 @@ pip install vibravox
   - Train and test on `speech_clean`, for recordings in a quiet environment:  (weights initialized from [facebook/wav2vec2-base-fr-voxpopuli](https://huggingface.co/facebook/wav2vec2-base-fr-voxpopuli) )
   ```
   python run.py \
-    lightning_datamodule=stp \
-    lightning_datamodule.sensor=throat_microphone \
+    lightning_datamodule=stp_common_voice \
+    'lightning_datamodule="Cnam-LMSSC/common_voice_13_french_phoneme"' \
     lightning_module=wav2vec2_for_stp \
-    lightning_module.optimizer.lr=1e-5 \
-    ++trainer.max_epochs=10
+    +data_augmentation=identity \
+    ++trainer.max_epochs=14 \
+    '++trainer.devices="3"' \
+    ++gpus=1
   ```
   -  Train and test on `speech_noisy`, for recordings in a noisy environment:  (weights initialized from [vibravox_phonemizers](https://huggingface.co/Cnam-LMSSC/vibravox_phonemizers) )
     ```
