@@ -60,7 +60,6 @@ class TriStageLRScheduler(_LRScheduler):
         assert isinstance(hold_steps, int), "hold_steps should be integer type"
         assert isinstance(decay_steps, int), "decay_steps should be integer type"
 
-        super(_LRScheduler, self).__init__()
         self.optimizer = optimizer
         self.init_lr = init_lr
         self.init_lr *= init_lr_scale
@@ -84,6 +83,8 @@ class TriStageLRScheduler(_LRScheduler):
 
         self.lr = self.init_lr
         self.update_steps = 0
+        
+        super().__init__(optimizer)
 
     def _decide_stage(self):
         if self.update_steps < self.warmup_steps:
